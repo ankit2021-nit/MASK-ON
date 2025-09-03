@@ -1,7 +1,5 @@
 # Real-Time Face Mask & Specs Detector
 
-![Demo Screenshot](demo-screenshot.png)
-
 ## Overview
 
 This project is a web-based real-time face mask and spectacles (specs) detector using TensorFlow.js and BlazeFace. It uses your webcam to detect faces, checks if a mask is worn, and identifies if the person is wearing specs—all in the browser, with no server required.
@@ -38,9 +36,6 @@ Then open [http://localhost:8000/index.html](http://localhost:8000/index.html) i
 - See bounding boxes and labels for mask/specs status.
 - Errors and status updates are shown interactively.
 
-## Demo
-Add a screenshot or GIF here to show the app in action!
-
 ## Customization
 - Change styles in `index.html` for your own theme.
 - Integrate other models for more features (e.g., age, emotion).
@@ -48,8 +43,5 @@ Add a screenshot or GIF here to show the app in action!
 ## Contributing
 Pull requests and suggestions are welcome! Please open an issue for bugs or feature requests.
 
-## License
-This project is licensed under the MIT License.
-
 ---
-**Made with TensorFlow.js, BlazeFace, and ❤️ by Ankit & contributors.**
+**Made with TensorFlow.js, BlazeFace, and ❤️ by Ankit
