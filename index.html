@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Real-Time Face Mask Detector</title>
+    <!-- Tailwind CSS for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Google Fonts: Inter -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <!-- TensorFlow.js library and the BlazeFace model for face detection -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-converter"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/blazeface"></script>
+
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        /* Custom styles for the bounding box and text */
+        .bbox {
+            position: absolute;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        }
+        .bbox-mask {
+            border: 3px solid #10f97d; /* Bright Green */
+        }
+        .bbox-no-mask {
+            border: 3px solid #f9105a; /* Bright Red */
+        }
+        .bbox-label {
+            position: absolute;
+            top: -24px;
+            left: 0;
+            color: #fff;
+            padding: 2px 8px;
+            border-radius: 5px;
+            font-size: 14px;
+            font-weight: 600;
+            white-space: nowrap;
+        }
+        .label-mask {
+             background-color: #10f97d;
+             color: #0d1117;
+        }
+        .label-no-mask {
+            background-color: #f9105a;
+        }
+    </style>
+</head>
+<body class="bg-slate-900 text-white flex items-center justify-center min-h-screen p-4">
+
+    <div class="w-full max-w-4xl mx-auto text-center">
+        <header class="mb-6">
+            <h1 class="text-4xl md:text-5xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-green-400 to-cyan-500">Real-Time Face Mask Detector</h1>
+            <p class="text-slate-400 mt-2">Using TensorFlow.js & BlazeFace Model</p>
+        </header>
+
+        <main>
+            <!-- Loading Indicator -->
+            <div id="loader" class="flex flex-col items-center justify-center p-8">
+                <div class="animate-spin rounded-full h-16 w-16 border-b-4 border-green-400"></div>
+                <p class="mt-4 text-slate-300">Loading AI Face Model...</p>
+            </div>
+            
+            <!-- Main Content Area -->
+            <div id="mainContent" class="hidden">
+                <!-- Video and Canvas Container -->
+                <div id="liveView" class="relative w-full max-w-2xl mx-auto rounded-lg overflow-hidden shadow-2xl shadow-green-500/10 mb-6 bg-slate-800">
+                    <video id="webcam" autoplay muted playsinline class="w-full h-auto"></video>
+                    <canvas id="hiddenCanvas" style="display: none;"></canvas>
+                    <div id="boundingBoxes" class="absolute top-0 left-0 w-full h-full"></div>
+                </div>
+
+                <!-- Controls -->
+                <div class="flex items-center justify-center space-x-4 mb-6">
+                    <button id="webcamButton" class="bg-gradient-to-r from-green-500 to-cyan-600 hover:from-green-600 hover:to-cyan-700 text-white font-bold py-3 px-6 rounded-lg shadow-lg transition-transform transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed">
+                        Enable Webcam
+                    </button>
+                </div>
+                
+                <!-- Detection Results -->
+                <div id="results" class="bg-slate-800 p-4 rounded-lg shadow-lg min-h-[100px] text-left">
+                     <h3 class="text-lg font-semibold mb-2 text-green-400">Detection Status:</h3>
+                     <p id="placeholder" class="text-slate-500">Enable the webcam to start detecting faces.</p>
+                     <div id="statusList" class="flex flex-col space-y-2"></div>
+                </div>
+                 <!-- Note -->
+                <div class="mt-6 text-sm text-slate-500">
+                    <p><strong>Note:</strong> This demo first detects a face, then analyzes pixels in the lower face region to guess if a mask is present. For production use, a custom-trained mask detection model would be more robust.</p>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        // Accessibility: Focus management for webcam button
+        document.addEventListener('DOMContentLoaded', () => {
+            document.getElementById('webcamButton').setAttribute('tabindex', '0');
+        });
+
+        const video = document.getElementById('webcam');
+        const webcamButton = document.getElementById('webcamButton');
+        const loader = document.getElementById('loader');
+        const mainContent = document.getElementById('mainContent');
+        const boundingBoxesDiv = document.getElementById('boundingBoxes');
+        const statusList = document.getElementById('statusList');
+        const placeholder = document.getElementById('placeholder');
+        const hiddenCanvas = document.getElementById('hiddenCanvas');
+        const hiddenContext = hiddenCanvas.getContext('2d');
+        const resultsDiv = document.getElementById('results');
+
+        let model = undefined;
+        let isWebcamEnabled = false;
+
+        // Error message element
+        let errorMsg = document.createElement('div');
+        errorMsg.setAttribute('id', 'errorMsg');
+        errorMsg.setAttribute('class', 'bg-red-600 text-white p-3 rounded-lg mb-4 font-semibold hidden');
+        resultsDiv.parentNode.insertBefore(errorMsg, resultsDiv);
+
+        // Load the BlazeFace model with error handling
+        blazeface.load().then(function (loadedModel) {
+            model = loadedModel;
+            loader.classList.add('hidden');
+            mainContent.classList.remove('hidden');
+        }).catch(function (err) {
+            showError('Failed to load AI Face Model. Please check your internet connection and reload the page.');
+        });
+
+        // Toggle Webcam with error handling
+        webcamButton.addEventListener('click', function() {
+            if (!model) {
+                showError('AI model not loaded yet. Please wait...');
+                return;
+            }
+            isWebcamEnabled = !isWebcamEnabled;
+            if (isWebcamEnabled) {
+                webcamButton.textContent = 'Disable Webcam';
+                webcamButton.classList.remove('from-green-500', 'to-cyan-600');
+                webcamButton.classList.add('from-pink-500', 'to-red-600');
+                enableCam();
+            } else {
+                webcamButton.textContent = 'Enable Webcam';
+                webcamButton.classList.add('from-green-500', 'to-cyan-600');
+                webcamButton.classList.remove('from-pink-500', 'to-red-600');
+                disableCam();
+            }
+        });
+
+        function enableCam() {
+            navigator.mediaDevices.getUserMedia({ video: true })
+                .then(function(stream) {
+                    video.srcObject = stream;
+                    video.addEventListener('loadeddata', predictWebcam);
+                    hideError();
+                })
+                .catch(function(err) {
+                    showError('Webcam access denied or unavailable. Please allow webcam access and try again.');
+                    isWebcamEnabled = false;
+                    webcamButton.textContent = 'Enable Webcam';
+                    webcamButton.classList.add('from-green-500', 'to-cyan-600');
+                    webcamButton.classList.remove('from-pink-500', 'to-red-600');
+                });
+        }
+
+        function disableCam() {
+            if (video.srcObject) {
+                const stream = video.srcObject;
+                const tracks = stream.getTracks();
+                tracks.forEach(track => track.stop());
+                video.srcObject = null;
+            }
+            boundingBoxesDiv.innerHTML = '';
+            statusList.innerHTML = '';
+            placeholder.classList.remove('hidden');
+            hideError();
+        }
+
+        // Show error message
+        function showError(msg) {
+            errorMsg.textContent = msg;
+            errorMsg.classList.remove('hidden');
+        }
+        // Hide error message
+        function hideError() {
+            errorMsg.classList.add('hidden');
+        }
+
+        // Heuristic function to check for a mask by analyzing pixel color variance
+        function hasMask(prediction, video, context, canvas) {
+            const start = prediction.topLeft;
+            const end = prediction.bottomRight;
+            const landmarks = prediction.landmarks;
+            const nose = landmarks[2];
+
+            // Define the region of interest (lower half of the face)
+            const roiX = Math.floor(start[0]);
+            const roiY = Math.floor(nose[1]); // Start from the nose tip
+            const roiWidth = Math.floor(end[0] - start[0]);
+            const roiHeight = Math.floor(end[1] - roiY);
+
+            if (roiWidth <= 0 || roiHeight <= 0) {
+                return false; // Invalid region
+            }
+
+            // Draw the current video frame to the hidden canvas to analyze it
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            context.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+            // Get the pixel data from the lower face region
+            const imageData = context.getImageData(roiX, roiY, roiWidth, roiHeight).data;
+
+            if (imageData.length < 4) {
+                return false; // Not enough data
+            }
+
+            // Calculate the standard deviation of pixel colors.
+            // A low standard deviation means colors are uniform (like a mask).
+            // A high standard deviation means colors are varied (like skin, lips, beard).
+            let r = 0, g = 0, b = 0, count = 0;
+            for (let i = 0; i < imageData.length; i += 4) {
+                r += imageData[i];
+                g += imageData[i + 1];
+                b += imageData[i + 2];
+                count++;
+            }
+
+            const avgR = r / count;
+            const avgG = g / count;
+            const avgB = b / count;
+
+            let stdDevSum = 0;
+            for (let i = 0; i < imageData.length; i += 4) {
+                stdDevSum += Math.pow(imageData[i] - avgR, 2);
+                stdDevSum += Math.pow(imageData[i + 1] - avgG, 2);
+                stdDevSum += Math.pow(imageData[i + 2] - avgB, 2);
+            }
+            
+            const totalStdDev = Math.sqrt(stdDevSum / (count * 3));
+            
+            // Experimental threshold. Lower value = stricter detection for masks.
+            const MASK_THRESHOLD = 25; 
+            
+            return totalStdDev < MASK_THRESHOLD;
+        }
+
+        // Main prediction loop with error handling
+        async function predictWebcam() {
+            if (!isWebcamEnabled) return;
+            try {
+                // Estimate faces
+                const predictions = await model.estimateFaces(video, false);
+                boundingBoxesDiv.innerHTML = '';
+
+                let maskCount = 0;
+                let noMaskCount = 0;
+
+                for (let i = 0; i < predictions.length; i++) {
+                    const start = predictions[i].topLeft;
+                    const end = predictions[i].bottomRight;
+                    const size = [end[0] - start[0], end[1] - start[1]];
+
+                    // Use the new, more robust mask detection function
+                    const isMasked = hasMask(predictions[i], video, hiddenContext, hiddenCanvas);
+
+                    if (isMasked) {
+                        maskCount++;
+                    } else {
+                        noMaskCount++;
+                    }
+                    
+                    const box = document.createElement('div');
+                    box.setAttribute('class', `bbox ${isMasked ? 'bbox-mask' : 'bbox-no-mask'}`);
+                    
+                    const label = document.createElement('span');
+                    label.setAttribute('class', `bbox-label ${isMasked ? 'label-mask' : 'label-no-mask'}`);
+                    label.innerText = isMasked ? 'Mask On' : 'No Mask';
+                    box.appendChild(label);
+                    
+                    const videoWidth = video.offsetWidth;
+                    const videoHeight = video.offsetHeight;
+                    
+                    const left = (start[0] / video.videoWidth) * videoWidth;
+                    const top = (start[1] / video.videoHeight) * videoHeight;
+                    const width = (size[0] / video.videoWidth) * videoWidth;
+                    const height = (size[1] / video.videoHeight) * videoHeight;
+                    
+                    box.style.left = `${left}px`;
+                    box.style.top = `${top}px`;
+                    box.style.width = `${width}px`;
+                    box.style.height = `${height}px`;
+
+                    boundingBoxesDiv.appendChild(box);
+                }
+                updateStatus(maskCount, noMaskCount);
+                hideError();
+            } catch (err) {
+                showError('Error during face detection. Try refreshing or check webcam permissions.');
+            }
+            window.requestAnimationFrame(predictWebcam);
+        }
+
+        // Update status UI
+        function updateStatus(maskCount, noMaskCount) {
+            statusList.innerHTML = '';
+            if (maskCount > 0 || noMaskCount > 0) {
+                 placeholder.classList.add('hidden');
+                 if (maskCount > 0) {
+                     statusList.innerHTML += `<div class="bg-green-500/10 p-2 rounded-md flex justify-between items-center"><span class="text-green-400">Faces with Masks</span><span class="bg-green-500 text-slate-900 font-bold rounded-full px-2.5 py-0.5 text-xs">${maskCount}</span></div>`;
+                 }
+                 if (noMaskCount > 0) {
+                     statusList.innerHTML += `<div class="bg-red-500/10 p-2 rounded-md flex justify-between items-center"><span class="text-red-400">Faces without Masks</span><span class="bg-red-500 text-white font-bold rounded-full px-2.5 py-0.5 text-xs">${noMaskCount}</span></div>`;
+                 }
+            } else {
+                placeholder.classList.remove('hidden');
+            }
+        }
+    </script>
+</body>
+</html>
